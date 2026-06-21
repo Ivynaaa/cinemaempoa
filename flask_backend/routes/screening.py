@@ -54,6 +54,7 @@ COLORS = {
     "paulo-amorim": "#469990",
 }
 
+
 @bp.route("/")
 def index():
     cinemas = get_all_cinemas()
