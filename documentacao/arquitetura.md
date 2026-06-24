@@ -1,6 +1,8 @@
 ```plantuml
 @startuml
-Alice -> Bob: hello
-Bob --> Alice: hi
+[First component]
+[Another component] as Comp2
+component Comp3
+component [Last\ncomponent] as Comp4
 @enduml
 ```
