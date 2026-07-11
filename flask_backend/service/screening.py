@@ -25,6 +25,7 @@ from flask_backend.repository.screenings import (
 )
 from flask_backend.service.upload import upload_image_to_api, upload_image_to_local_disk
 from flask_backend.utils.enums.environment import EnvironmentEnum
+from abc import ABC, abstractmethod
 
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
 
@@ -173,26 +174,51 @@ def _handle_poster_upload(poster_url: Optional[str], current_app) -> Tuple[Optio
         
     return None, None, None
 
+# Strategy Interface Definition
+class ScreeningDateStrategy(ABC):
+    @abstractmethod
+    def resolve(self, screening, scrapped_dates: List[ScreeningDate]) -> List[ScreeningDate]:
+        """Abstract contract defining how to resolve display dates"""
+        pass
+
+
+# Standard Strategy for most movie theaters
+class DefaultScreeningDateStrategy(ScreeningDateStrategy):
+    def resolve(self, screening, scrapped_dates: List[ScreeningDate]) -> List[ScreeningDate]:
+        # creates new instances to prevent memory reference errors
+        return build_dates([f"{sd.date}T{sd.time}" for sd in screening.dates])
+
+
+# Specialized Strategy for Cinema Capitólio (Issue #163)
+class CapitolioScreeningDateStrategy(ScreeningDateStrategy):
+    def resolve(self, screening, scrapped_dates: List[ScreeningDate]) -> List[ScreeningDate]:
+        # Capitólio specific logic: deletes records for the day and relies on the new ones
+        received_dates_for_screening = [sd.date for sd in scrapped_dates]
+        return build_dates([
+            f"{sd.date}T{sd.time}"
+            for sd in screening.dates
+            if sd.date not in received_dates_for_screening
+        ])
+
+
+# mapping Dictionary (eliminates if/else)
+STRATEGY_MAP = {
+    "capitolio": CapitolioScreeningDateStrategy()
+}
+
 
 def _resolve_screening_dates(cinema_slug: str, screening, scrapped_dates: List[ScreeningDate]) -> List[ScreeningDate]:
-    """Extracts the complex logic for merging dates, including the Capitolio rule"""
-    if cinema_slug == "capitolio":
-        # Capitólio Strategy: deletes records from the day and relies on the new ones (Issue #163)
-        received_dates_for_screening = [sd.date for sd in scrapped_dates]
-        existing_dates = build_dates(
-            [
-                f"{sd.date}T{sd.time}"
-                for sd in screening.dates
-                if sd.date not in received_dates_for_screening
-            ]
-        )
-    else:
-        # Standard Strategy for other cinemas
-        existing_dates = build_dates(
-            [f"{sd.date}T{sd.time}" for sd in screening.dates]
-        )
+    """
+    Refactored: Replaced conditional complexity with the Strategy Pattern
+    Transparently retrieves the correct strategy based on the cinema slug
+    """
+    # if the cinema has a mapped-out strategy, use it; otherwise, use the standard one.
+    strategy = STRATEGY_MAP.get(cinema_slug, DefaultScreeningDateStrategy())
+    
+    # executes the polymorphic behavior without the method needing to know which cinema it is dealing with
+    existing_dates = strategy.resolve(screening, scrapped_dates)
 
-    # Appends the new dates, avoiding exact duplicates of day and time
+    # maintains the final logic of merging and preventing exact duplicates
     for new_date in scrapped_dates:
         already_registered = any(
             existing_date.date == new_date.date and existing_date.time == new_date.time
