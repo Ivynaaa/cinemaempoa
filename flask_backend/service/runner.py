@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from flask_backend.import_json import ScrappedResult
 from flask_backend.service.screening import import_scrapped_results
 from scrapers.capitolio import Capitolio
@@ -58,3 +59,7 @@ class Runner:
 
     def import_scrapped_results(self, current_app):
         return import_scrapped_results(self.scrapped_results, current_app)
+    
+    def accept(self, visitor):
+        """ Allows a visitor to access the internal structure of the Runner """
+        visitor.visit_runner(self)

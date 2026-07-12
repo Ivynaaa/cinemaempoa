@@ -2,7 +2,7 @@ import json
 import math
 from datetime import date, datetime
 from typing import List
-
+from abc import ABC, abstractmethod
 from flask import (
     Blueprint,
     current_app,
@@ -373,6 +373,24 @@ def delete(id):
     flash(f"Sessão «{movie_title}» deletado com sucesso!", "success")
     return redirect(url_for("screening.index"))
 
+class RunnerVisitor(ABC):
+    @abstractmethod
+    def visit_runner(self, runner) -> None:
+        pass
+
+class CinemaValidationVisitor(RunnerVisitor):
+    def __init__(self):
+        self.is_valid = True
+        self.invalid_cinema_slug = None
+
+    def visit_runner(self, runner) -> None:
+        # it performs validation directly on the runner's internal data, eliminating Feature Envy.
+        for json_cinema in runner.scrapped_results.cinemas:
+            cinema = get_cinema_by_slug(json_cinema.slug)
+            if cinema is None:
+                self.is_valid = False
+                self.invalid_cinema_slug = json_cinema.slug
+                return  # stops at the first detected failure.
 
 @bp.route("/screening/scrap", methods=["POST"])
 @login_required
@@ -407,12 +425,13 @@ def runScrap():
         print(e)
         return render_template("screening/import.html", suggestions=[])
 
-    # validate all cinemas exist in db
-    for json_cinema in runner.scrapped_results.cinemas:
-        cinema = get_cinema_by_slug(json_cinema.slug)
-        if cinema is None:
-            flash(f"Sala {json_cinema.slug} não encontrada.")
-            return render_template("screening/import.html", suggestions=[])
+    # instantiates and executes the visitor
+    validator = CinemaValidationVisitor()
+    runner.accept(validator)
+
+    if not validator.is_valid:
+        flash(f"Sala {validator.invalid_cinema_slug} não encontrada.", "danger")
+        return render_template("screening/import.html", suggestions=[])
 
     created_features = runner.import_scrapped_results(current_app)
     flash(f"«{created_features}» sessões criadas com sucesso!", "success")
