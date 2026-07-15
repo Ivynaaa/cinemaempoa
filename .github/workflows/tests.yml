@@ -1,8 +1,6 @@
 name: tests
 on: 
   pull_request:
-    branches: 
-      - develop #ATENÇÃO!!! mudar para main quando enviar ao codigo final
 jobs:
   build: #Job responsável por compilar o projeto
     runs-on: ubuntu-latest #Os comandos serão executados na última versão da distribuição Ubuntu
