@@ -2,7 +2,7 @@ name: tests
 on: 
   pull_request:
 jobs:
-  test: #Job responsável por compilar os testes e gerar os artefatos relacionados
+  test:
     runs-on: ubuntu-latest
     permissions:
       checks: write
@@ -11,12 +11,23 @@ jobs:
       - name: Repo checkout
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
       - name: Build tests
         run: |
           pytest flask_backend/tests --junitxml=test/test.xml
      
       - name: Show results
         uses: EnricoMi/publish-unit-test-result-action@v2
-        if: always() #Sempre executa essa etapa
+        if: always()
         with:
-          files: test/test.xml #Arquivo com os resultados dos testes
+          files: test/test.xml
