@@ -34,7 +34,7 @@ jobs:
 
       - name: Build tests
         run: |
-          pytest flask_backend/tests
+          pytest flask_backend/tests --junitxml=test/test.xml
      
       - name: Show results
         uses: EnricoMi/publish-unit-test-result-action@v2
