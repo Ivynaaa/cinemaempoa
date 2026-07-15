@@ -1,8 +1,9 @@
 import json
 import math
+from abc import ABC, abstractmethod
 from datetime import date, datetime
 from typing import List
-from abc import ABC, abstractmethod
+
 from flask import (
     Blueprint,
     current_app,
@@ -55,6 +56,7 @@ COLORS = {
     "cinebancarios": "#9A6324",
     "paulo-amorim": "#469990",
 }
+
 
 @bp.route("/")
 def index():
@@ -111,7 +113,7 @@ def index():
     alert_html = "<p class='mb-0'>O cinemaempoa <strong>mostra os filmes em exibição</strong> no "
     qtt_links = len(quicklinks)
     for idx, link in enumerate(quicklinks):
-        alert_html += f"<a href='#{link[0]}' class='alert-link'>{ link[1] }</a>"
+        alert_html += f"<a href='#{link[0]}' class='alert-link'>{link[1]}</a>"
         if qtt_links > 0 and idx < len(quicklinks) - 1:
             if idx < len(quicklinks) - 2:
                 alert_html += ", "
@@ -373,10 +375,12 @@ def delete(id):
     flash(f"Sessão «{movie_title}» deletado com sucesso!", "success")
     return redirect(url_for("screening.index"))
 
+
 class RunnerVisitor(ABC):
     @abstractmethod
     def visit_runner(self, runner) -> None:
         pass
+
 
 class CinemaValidationVisitor(RunnerVisitor):
     def __init__(self):
@@ -391,6 +395,7 @@ class CinemaValidationVisitor(RunnerVisitor):
                 self.is_valid = False
                 self.invalid_cinema_slug = json_cinema.slug
                 return  # stops at the first detected failure.
+
 
 @bp.route("/screening/scrap", methods=["POST"])
 @login_required

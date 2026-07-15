@@ -1,6 +1,7 @@
 import hashlib
 import imghdr
 import os
+from abc import ABC, abstractmethod
 from datetime import datetime
 from io import BytesIO
 from typing import List, Optional, Tuple
@@ -12,7 +13,7 @@ from urllib3.util.retry import Retry
 from werkzeug.utils import secure_filename
 
 from flask_backend.env_config import APP_ENVIRONMENT
-from flask_backend.import_json import ScrappedCinema, ScrappedFeature, ScrappedResult
+from flask_backend.import_json import ScrappedFeature, ScrappedResult
 from flask_backend.models import ScreeningDate
 from flask_backend.repository.cinemas import get_by_slug as get_cinema_by_slug
 from flask_backend.repository.movies import (
@@ -25,7 +26,6 @@ from flask_backend.repository.screenings import (
 )
 from flask_backend.service.upload import upload_image_to_api, upload_image_to_local_disk
 from flask_backend.utils.enums.environment import EnvironmentEnum
-from abc import ABC, abstractmethod
 
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
 
@@ -159,62 +159,73 @@ def _build_feature_description(scrapped_feature: ScrappedFeature) -> str:
         description_parts.append(scrapped_feature.general_info)
     if scrapped_feature.excerpt:
         description_parts.append(scrapped_feature.excerpt)
-        
+
     return "\n".join(description_parts).strip()
 
 
-def _handle_poster_upload(poster_url: Optional[str], current_app) -> Tuple[Optional[str], Optional[int], Optional[int]]:
+def _handle_poster_upload(
+    poster_url: Optional[str], current_app
+) -> Tuple[Optional[str], Optional[int], Optional[int]]:
     """Extracts the responsibility for downloading and saving the movie poster"""
     if not poster_url:
         return None, None, None
-        
+
     img, filename = download_image_from_url(poster_url)
     if img is not None:
         return save_image(img, current_app, filename)
-        
+
     return None, None, None
+
 
 # Strategy Interface Definition
 class ScreeningDateStrategy(ABC):
     @abstractmethod
-    def resolve(self, screening, scrapped_dates: List[ScreeningDate]) -> List[ScreeningDate]:
+    def resolve(
+        self, screening, scrapped_dates: List[ScreeningDate]
+    ) -> List[ScreeningDate]:
         """Abstract contract defining how to resolve display dates"""
         pass
 
 
 # Standard Strategy for most movie theaters
 class DefaultScreeningDateStrategy(ScreeningDateStrategy):
-    def resolve(self, screening, scrapped_dates: List[ScreeningDate]) -> List[ScreeningDate]:
+    def resolve(
+        self, screening, scrapped_dates: List[ScreeningDate]
+    ) -> List[ScreeningDate]:
         # creates new instances to prevent memory reference errors
         return build_dates([f"{sd.date}T{sd.time}" for sd in screening.dates])
 
 
 # Specialized Strategy for Cinema Capitólio (Issue #163)
 class CapitolioScreeningDateStrategy(ScreeningDateStrategy):
-    def resolve(self, screening, scrapped_dates: List[ScreeningDate]) -> List[ScreeningDate]:
+    def resolve(
+        self, screening, scrapped_dates: List[ScreeningDate]
+    ) -> List[ScreeningDate]:
         # Capitólio specific logic: deletes records for the day and relies on the new ones
         received_dates_for_screening = [sd.date for sd in scrapped_dates]
-        return build_dates([
-            f"{sd.date}T{sd.time}"
-            for sd in screening.dates
-            if sd.date not in received_dates_for_screening
-        ])
+        return build_dates(
+            [
+                f"{sd.date}T{sd.time}"
+                for sd in screening.dates
+                if sd.date not in received_dates_for_screening
+            ]
+        )
 
 
 # mapping Dictionary (eliminates if/else)
-STRATEGY_MAP = {
-    "capitolio": CapitolioScreeningDateStrategy()
-}
+STRATEGY_MAP = {"capitolio": CapitolioScreeningDateStrategy()}
 
 
-def _resolve_screening_dates(cinema_slug: str, screening, scrapped_dates: List[ScreeningDate]) -> List[ScreeningDate]:
+def _resolve_screening_dates(
+    cinema_slug: str, screening, scrapped_dates: List[ScreeningDate]
+) -> List[ScreeningDate]:
     """
     Refactored: Replaced conditional complexity with the Strategy Pattern
     Transparently retrieves the correct strategy based on the cinema slug
     """
     # if the cinema has a mapped-out strategy, use it; otherwise, use the standard one.
     strategy = STRATEGY_MAP.get(cinema_slug, DefaultScreeningDateStrategy())
-    
+
     # executes the polymorphic behavior without the method needing to know which cinema it is dealing with
     existing_dates = strategy.resolve(screening, scrapped_dates)
 
@@ -226,35 +237,37 @@ def _resolve_screening_dates(cinema_slug: str, screening, scrapped_dates: List[S
         )
         if not already_registered:
             existing_dates.append(new_date)
-            
+
     return existing_dates
 
 
 def import_scrapped_results(scrapped_results: ScrappedResult, current_app) -> int:
     """Extracts the main logic for importing scrapped results: now acts only as an orchestrator"""
     created_features = 0
-    
+
     for scrapped_cinema in scrapped_results.cinemas:
         cinema = get_cinema_by_slug(scrapped_cinema.slug)
-        
+
         for scrapped_feature in scrapped_cinema.features:
             movie = get_movie_by_title_or_create(scrapped_feature.title)
-            
+
             # 1. Processes scraping dates
             screenings_dates = (
-                build_dates(scrapped_feature.time) 
-                if scrapped_feature.time 
+                build_dates(scrapped_feature.time)
+                if scrapped_feature.time
                 else build_dates([datetime.now().strftime("%Y-%m-%dT%H:%M")])
             )
-            
+
             # 2. Searches for existing screening
             screening = get_screening_by_movie_id_and_cinema_id(movie.id, cinema.id)
-            
+
             if not screening:
                 # 3. Creates new screening (Scenario A)
                 description = _build_feature_description(scrapped_feature)
-                img_filename, img_width, img_height = _handle_poster_upload(scrapped_feature.poster, current_app)
-                
+                img_filename, img_width, img_height = _handle_poster_upload(
+                    scrapped_feature.poster, current_app
+                )
+
                 create_screening(
                     movie_id=movie.id,
                     description=description,
@@ -269,9 +282,11 @@ def import_scrapped_results(scrapped_results: ScrappedResult, current_app) -> in
                 )
             else:
                 # 4. Updates existing screening (Scenario B)
-                updated_dates = _resolve_screening_dates(cinema.slug, screening, screenings_dates)
+                updated_dates = _resolve_screening_dates(
+                    cinema.slug, screening, screenings_dates
+                )
                 update_screening_dates(screening, updated_dates)
-                
+
             created_features += 1
-            
+
     return created_features
