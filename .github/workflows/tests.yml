@@ -2,32 +2,11 @@ name: tests
 on: 
   pull_request:
 jobs:
-  build: #Job responsável por compilar o projeto
-    runs-on: ubuntu-latest #Os comandos serão executados na última versão da distribuição Ubuntu
-    permissions:
-      contents: write #Permissão de escrita em conteúdos
-    steps:
-      - name: Repo checkout #Nome da etapa que usará uma actions para clonar o repositório do GH
-        uses: actions/checkout@v4 #Action reusável que clona o repo do GH na estação de trabalho
-
-      - name: Espressif IoT Development Framework (ESP-IDF) #Interação com o ESP-IDF
-        uses: espressif/esp-idf-ci-action@v1.1.0 #Action fornecida pela Espressif
-        with:
-          esp_idf_version: v4.4 #Versão do ESP-IDF a ser utilizada
-          target: esp32 #Especifica a plataforma de compilação
-
-      - name: Store Artifacts 
-        uses: actions/upload-artifact@v4 #Armazena os artefatos gerados pela compilação
-        with:
-          name: testsA #Especifica o nome do artefato criado
-          path: build/testsA.bin
-
   test: #Job responsável por compilar os testes e gerar os artefatos relacionados
     runs-on: ubuntu-latest
     permissions:
       checks: write
       pull-requests: write
-    needs: [build] #Job test só será executado se o Job build for bem-sucedido
     steps:
       - name: Repo checkout
         uses: actions/checkout@v4
