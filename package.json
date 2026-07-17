@@ -1,0 +1,27 @@
+{
+  "name": "cinemaempoa",
+  "version": "1.0.0",
+  "description": "CINEMA EM POA é um portal agregador de filmes das casas de cinema de Porto Alegre.",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ivynaaa/cinemaempoa.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Ivynaaa/cinemaempoa/issues"
+  },
+  "homepage": "https://github.com/Ivynaaa/cinemaempoa#readme",
+  "devDependencies": {
+    "cypress": "^15.18.1"
+  }
+}

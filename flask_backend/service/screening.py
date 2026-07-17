@@ -1,6 +1,7 @@
 import hashlib
 import imghdr
 import os
+from abc import ABC, abstractmethod
 from datetime import datetime
 from io import BytesIO
 from typing import List, Optional, Tuple
@@ -12,7 +13,7 @@ from urllib3.util.retry import Retry
 from werkzeug.utils import secure_filename
 
 from flask_backend.env_config import APP_ENVIRONMENT
-from flask_backend.import_json import ScrappedCinema, ScrappedFeature, ScrappedResult
+from flask_backend.import_json import ScrappedFeature, ScrappedResult
 from flask_backend.models import ScreeningDate
 from flask_backend.repository.cinemas import get_by_slug as get_cinema_by_slug
 from flask_backend.repository.movies import (
@@ -143,107 +144,149 @@ def get_image_metadata(img_path):
     return loaded_image.width, loaded_image.height
 
 
-def import_scrapped_results(scrapped_results: ScrappedResult, current_app):
+def _build_feature_description(scrapped_feature: ScrappedFeature) -> str:
+    """Extracts the responsibility for constructing the movie description string"""
+    description_parts = []
+    if scrapped_feature.original_title:
+        description_parts.append(scrapped_feature.original_title.strip())
+    if scrapped_feature.price:
+        description_parts.append(scrapped_feature.price)
+    if scrapped_feature.director:
+        description_parts.append(scrapped_feature.director)
+    if scrapped_feature.classification:
+        description_parts.append(scrapped_feature.classification)
+    if scrapped_feature.general_info:
+        description_parts.append(scrapped_feature.general_info)
+    if scrapped_feature.excerpt:
+        description_parts.append(scrapped_feature.excerpt)
+
+    return "\n".join(description_parts).strip()
+
+
+def _handle_poster_upload(
+    poster_url: Optional[str], current_app
+) -> Tuple[Optional[str], Optional[int], Optional[int]]:
+    """Extracts the responsibility for downloading and saving the movie poster"""
+    if not poster_url:
+        return None, None, None
+
+    img, filename = download_image_from_url(poster_url)
+    if img is not None:
+        return save_image(img, current_app, filename)
+
+    return None, None, None
+
+
+# Strategy Interface Definition
+class ScreeningDateStrategy(ABC):
+    @abstractmethod
+    def resolve(
+        self, screening, scrapped_dates: List[ScreeningDate]
+    ) -> List[ScreeningDate]:
+        """Abstract contract defining how to resolve display dates"""
+        pass
+
+
+# Standard Strategy for most movie theaters
+class DefaultScreeningDateStrategy(ScreeningDateStrategy):
+    def resolve(
+        self, screening, scrapped_dates: List[ScreeningDate]
+    ) -> List[ScreeningDate]:
+        # creates new instances to prevent memory reference errors
+        return build_dates([f"{sd.date}T{sd.time}" for sd in screening.dates])
+
+
+# Specialized Strategy for Cinema Capitólio (Issue #163)
+class CapitolioScreeningDateStrategy(ScreeningDateStrategy):
+    def resolve(
+        self, screening, scrapped_dates: List[ScreeningDate]
+    ) -> List[ScreeningDate]:
+        # Capitólio specific logic: deletes records for the day and relies on the new ones
+        received_dates_for_screening = [sd.date for sd in scrapped_dates]
+        return build_dates(
+            [
+                f"{sd.date}T{sd.time}"
+                for sd in screening.dates
+                if sd.date not in received_dates_for_screening
+            ]
+        )
+
+
+# mapping Dictionary (eliminates if/else)
+STRATEGY_MAP = {"capitolio": CapitolioScreeningDateStrategy()}
+
+
+def _resolve_screening_dates(
+    cinema_slug: str, screening, scrapped_dates: List[ScreeningDate]
+) -> List[ScreeningDate]:
+    """
+    Refactored: Replaced conditional complexity with the Strategy Pattern
+    Transparently retrieves the correct strategy based on the cinema slug
+    """
+    # if the cinema has a mapped-out strategy, use it; otherwise, use the standard one.
+    strategy = STRATEGY_MAP.get(cinema_slug, DefaultScreeningDateStrategy())
+
+    # executes the polymorphic behavior without the method needing to know which cinema it is dealing with
+    existing_dates = strategy.resolve(screening, scrapped_dates)
+
+    # maintains the final logic of merging and preventing exact duplicates
+    for new_date in scrapped_dates:
+        already_registered = any(
+            existing_date.date == new_date.date and existing_date.time == new_date.time
+            for existing_date in existing_dates
+        )
+        if not already_registered:
+            existing_dates.append(new_date)
+
+    return existing_dates
+
+
+def import_scrapped_results(scrapped_results: ScrappedResult, current_app) -> int:
+    """Extracts the main logic for importing scrapped results: now acts only as an orchestrator"""
     created_features = 0
-    scrapped_cinema: ScrappedCinema
+
     for scrapped_cinema in scrapped_results.cinemas:
         cinema = get_cinema_by_slug(scrapped_cinema.slug)
-        scrapped_feature: ScrappedFeature
+
         for scrapped_feature in scrapped_cinema.features:
             movie = get_movie_by_title_or_create(scrapped_feature.title)
 
-            description: str = ""
-            screenings_dates = None
-            if scrapped_feature.time:
-                screenings_dates = build_dates(scrapped_feature.time)
-            if scrapped_feature.original_title:
-                description += f"\n{scrapped_feature.original_title.strip()}"
-            if scrapped_feature.price:
-                description += f"\n{scrapped_feature.price}"
-            if scrapped_feature.director:
-                description += f"\n{scrapped_feature.director}"
-            if scrapped_feature.classification:
-                description += f"\n{scrapped_feature.classification}"
-            if scrapped_feature.general_info:
-                description += f"\n{scrapped_feature.general_info}"
-            if scrapped_feature.excerpt:
-                description += f"\n{scrapped_feature.excerpt}"
+            # 1. Processes scraping dates
+            screenings_dates = (
+                build_dates(scrapped_feature.time)
+                if scrapped_feature.time
+                else build_dates([datetime.now().strftime("%Y-%m-%dT%H:%M")])
+            )
 
-            description = description.strip()
-
-            if screenings_dates is None:
-                screenings_dates = build_dates(
-                    [datetime.now().strftime("%Y-%m-%dT%H:%M")]
-                )
+            # 2. Searches for existing screening
             screening = get_screening_by_movie_id_and_cinema_id(movie.id, cinema.id)
 
             if not screening:
-                # only attempt to download the poster if the screening doesn't previously exists
-                img, image_filename, image_width, image_height = None, None, None, None
-                if scrapped_feature.poster:
-                    img, filename = download_image_from_url(scrapped_feature.poster)
-
-                if img is not None:
-                    # if we fail to download or validate the image, just ignore it for now
-                    image_filename, image_width, image_height = save_image(
-                        img, current_app, filename
-                    )
+                # 3. Creates new screening (Scenario A)
+                description = _build_feature_description(scrapped_feature)
+                img_filename, img_width, img_height = _handle_poster_upload(
+                    scrapped_feature.poster, current_app
+                )
 
                 create_screening(
                     movie_id=movie.id,
                     description=description,
                     cinema_id=cinema.id,
                     screening_dates=screenings_dates,
-                    image=image_filename,
-                    image_width=image_width,
-                    image_height=image_height,
+                    image=img_filename,
+                    image_width=img_width,
+                    image_height=img_height,
                     is_draft=False,
                     image_alt=None,
                     url_origin=scrapped_feature.read_more,
                 )
             else:
-                if cinema.slug == "capitolio":
-                    # capitolio may occasionally change
-                    # screening times for a given movie
-                    # so records for any given day could become obsolete
-                    # our strategy is, for every day included in the current run,
-                    # we delete existing records and trust the new ones
-                    # see issue #163
+                # 4. Updates existing screening (Scenario B)
+                updated_dates = _resolve_screening_dates(
+                    cinema.slug, screening, screenings_dates
+                )
+                update_screening_dates(screening, updated_dates)
 
-                    # ex. existing_dates_for_screening = [ 12/12/2025, 13/12/2025, 14/12/2025 ]
-                    existing_dates_for_screening = [sd for sd in screening.dates]
-
-                    # ex. [13/12/2025, 14/12/2025]
-                    received_dates_for_screening = [sd.date for sd in screenings_dates]
-
-                    # we skip screening_dates for dates in the
-                    # `received_dates_for_screening` list, so they can be recreated
-                    # ex. existing_dates = [ 12/12/2025 ]
-                    existing_dates = build_dates(
-                        [
-                            f"{sd.date}T{sd.time}"
-                            for sd in existing_dates_for_screening
-                            if sd.date not in received_dates_for_screening
-                        ]
-                    )
-                else:
-                    # create new ScreeningDate objects from existing ones
-                    # to prevent reference errors
-                    existing_dates = build_dates(
-                        [f"{sd.date}T{sd.time}" for sd in screening.dates]
-                    )
-                # append new dates to the list by checking if there is no
-                # other date with an equal date and time fields
-                for new_date in screenings_dates:
-                    already_registered = False
-                    for existing_date in existing_dates:
-                        same_date = existing_date.date == new_date.date
-                        same_time = existing_date.time == new_date.time
-                        if same_date and same_time:
-                            already_registered = True
-                            break
-                    if not already_registered:
-                        existing_dates.append(new_date)
-                update_screening_dates(screening, existing_dates)
             created_features += 1
+
     return created_features
