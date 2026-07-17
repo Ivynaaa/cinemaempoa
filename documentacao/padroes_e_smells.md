@@ -130,7 +130,7 @@ def import_scrapped_results(scrapped_results: ScrappedResult, current_app) -> in
 
 ## 2. Switch Statement
 - **Trecho do Código:** Bloco condicional estruturado com checagens em string rígidas, como `if cinema.slug == "capitolio"`, dentro do fluxo de processamento e parsing de datas das sessões. 
-- **Problema Identificado:** O uso de condicionais baseadas em strings para definir comportamentos específicos caracteriza o smell de *Switch Statement*. Isso viola o Princípio Aberto-Fechado (OCP), pois a adição de um novo cinema com regras próprias exigiria a alteração do código existente.  
+- **Problema Identificado:** O uso de condicionais baseadas em strings para definir comportamentos específicos. Isso viola o Princípio Aberto-Fechado, pois a adição de um novo cinema com regras próprias exigiria a alteração do código existente.  
 - **Solução Aplicada:** Substituição da estrutura condiciona através do padrão de projeto Strategy. 
 - **Justificativa Técnica:** Foi criada uma interface abstrata `ScreeningDateStrategy` e implementações concretas (`DefaultScreeningDateStrategy` e `CapitolioScreeningDateStrategy`). Um dicionário de mapeamento (`STRATEGY_MAP`) permite a busca dinâmica da estratégia correta sem condicionais rígidas.  
 *Benefícios:* O sistema tornou-se extensível. Novos comportamentos de cinemas podem ser adicionados criando novas classes, sem risco de quebrar o fluxo principal.
